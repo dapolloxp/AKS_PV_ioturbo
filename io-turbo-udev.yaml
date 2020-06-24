@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  labels:
+    component: udev-patch
+  name: udev-patch
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      component: udev-patch
+      tier: node
+  template:
+    metadata:
+      labels:
+        component: udev-patch
+        tier: node
+    spec:
+      nodeSelector:
+        kubernetes.azure.com/scalesetpriority: spot
+      containers:
+      - command:
+        - /bin/sh
+        - -c
+        - |
+          ETCMNT="/etcmnt"
+          
+          cat <<EOF >${ETCMNT}/modifyudev.sh
+          #!/bin/sh -e
+          #
+          # modifyudev.sh
+          if [ -f "${ETCMNT}/udev/rules.d/66-azure-storage.rules.bak" ]; then
+            echo "node has already been modified."
+
+          else
+              echo "modifying file"
+              sed -i.bak 's/GOTO="azure_disk"$/ ATTR{bdi\/read_ahead_kb}=\"8192\", ATTR{queue\/scheduler}=\"deadline\", &/' ${ETCMNT}/udev/rules.d/66-azure-storage.rules
+          fi
+          # rc.local always wants a 0
+          EOF
+          chmod +x ${ETCMNT}/modifyudev.sh
+          ${ETCMNT}/modifyudev.sh
+          while true; do sleep 100000; done
+        image: alpine
+        imagePullPolicy: IfNotPresent
+        name: udev-patch
+        volumeMounts:
+        - name: etcmnt
+          mountPath: /etcmnt
+        resources:
+          requests:
+            cpu: 10m
+        securityContext:
+          privileged: true
+      dnsPolicy: ClusterFirst
+      hostPID: true
+      tolerations:
+      - effect: NoSchedule
+        operator: Exists
+      restartPolicy: Always
+      volumes:
+      - name: etcmnt
+        hostPath:
+          path: /etc
+  updateStrategy:
+    type: OnDelete
